@@ -6,7 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -14,29 +14,31 @@ REPOSITORY = "PXYQ/liebian-actions-lab"
 TEAM_ID = "team_16kEqgHGciCuUillcswqPeqE"
 PROJECT_ID = "prj_MpbG3VsbT5wUdK40aMTtAVrdHUgi"
 PROJECT_NAME = "liebian-actions-lab"
+PREVIEW_VIEWER_GITHUB_LOGIN = "dajuwu01-glitch"
 SITE = f"{PROJECT_NAME}.vercel.app"
 DEPLOYMENT_ID = re.compile(r"dpl_[A-Za-z0-9]{12,80}")
 HOSTNAME = re.compile(r"[a-z0-9-]+\.vercel\.app")
 
 
-def api(origin, path, token, body=None):
+def api(origin, path, token, body=None, *, method=None):
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     data = None
     if body is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(body).encode()
-    req = Request(origin + path, data=data, headers=headers)
+    req = Request(origin + path, data=data, headers=headers, method=method)
     try:
         with urlopen(req, timeout=20) as response:
-            return json.load(response)
+            payload = response.read()
+            return json.loads(payload) if payload else {}
     except HTTPError as error:
         # Provider responses can contain user-supplied data. Log only the status.
         raise RuntimeError(f"{origin} returned HTTP {error.code}") from None
 
 
-def vercel(path, body=None):
+def vercel(path, body=None, *, method=None):
     return api("https://api.vercel.com", f"{path}?teamId={TEAM_ID}",
-               os.environ["VERCEL_LAB_TOKEN"], body)
+               os.environ["VERCEL_LAB_TOKEN"], body, method=method)
 
 
 def checked_deployment(identifier):
@@ -99,8 +101,14 @@ def main():
 
     request = {"name": PROJECT_NAME, "project": PROJECT_ID}
     event_name = os.environ["GITHUB_EVENT_NAME"]
+    preview_viewer_email = None
     if event_name == "workflow_run":
         sha, page = submitted_page(event)
+        actor = event["workflow_run"]["actor"]["login"]
+        if actor.casefold() == PREVIEW_VIEWER_GITHUB_LOGIN:
+            preview_viewer_email = os.environ.get("VERCEL_LAB_PREVIEW_VIEWER_EMAIL", "").strip()
+            if not preview_viewer_email:
+                raise ValueError("The vercel-lab environment is missing VERCEL_LAB_PREVIEW_VIEWER_EMAIL.")
         request["files"] = [
             {"file": "index.html", "encoding": "base64", "data": base64.b64encode(page).decode()}
         ]
@@ -133,6 +141,17 @@ def main():
     ]
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as output:
         output.write("\n".join(summary) + "\n")
+        if preview_viewer_email:
+            try:
+                vercel(
+                    f"/aliases/{hostname}/protection-bypass",
+                    {"scope": {"email": preview_viewer_email, "access": "granted"}},
+                    method="PATCH",
+                )
+            except (RuntimeError, URLError, TimeoutError, json.JSONDecodeError):
+                output.write("- Preview access: automatic sharing failed.\n")
+                raise
+            output.write("- Preview access: granted to the configured operator.\n")
     print(f"{title}: {created['id']}")
 
 
