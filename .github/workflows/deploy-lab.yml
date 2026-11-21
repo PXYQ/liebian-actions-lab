@@ -1,0 +1,42 @@
+name: Vercel test site
+on:
+  workflow_run:
+    workflows: ['Request test preview']
+    types: [completed]
+    branches: ['content/**']
+  workflow_dispatch:
+    inputs:
+      preview_id:
+        description: '已验收的预览编号（dpl_ 开头）'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'PXYQ/liebian-actions-lab' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.id == github.event.repository.id))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    concurrency:
+      group: vercel-lab-${{ github.event.workflow_run.head_branch || 'publish' }}
+      cancel-in-progress: false
+    environment: vercel-lab
+    steps:
+      - name: Check out deployment code from the trusted workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Deploy to the Vercel test project
+        run: python3 .github/scripts/deploy_lab.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_LAB_TOKEN: ${{ secrets.VERCEL_LAB_TOKEN }}

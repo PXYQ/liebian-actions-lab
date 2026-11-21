@@ -1,0 +1,14 @@
+name: Request test preview
+on:
+  push:
+    branches: ['content/**']
+    paths: ['index.html']
+
+permissions: {}
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Queued a preview for this site edit.'
